@@ -119,11 +119,10 @@ def total_de_passos(ordem):
 # ===============================================================
 @app.route("/api/maquinas", methods=["GET"])
 def listar_maquinas():
-    # TODO 1.1: devolver TODAS as máquinas como uma LISTA em JSON.
+        # TODO 1.1: devolver TODAS as máquinas como uma LISTA em JSON.
     #   - As máquinas estão em dados.maquinas (um dicionário código -> máquina).
     #   - Dica: list(dados.maquinas.values()) vira uma lista.
-    return nao_implementado(1)
-
+    return jsonify(list(dados.maquinas.values()))
 
 @app.route("/api/maquinas/<codigo>", methods=["GET"])
 def buscar_maquina(codigo):
@@ -136,7 +135,20 @@ def buscar_maquina(codigo):
     #        "procedimento": título do procedimento
     #        "total_passos": quantidade de passos (len(...))
     #   e) return jsonify(resposta)
-    return nao_implementado(1)
+    codigo = codigo.upper()
+    
+    if codigo not in dados.maquinas:
+        return erro("Máquina não encontrada", 404)
+    
+    maquina = dados.maquinas[codigo]
+    procedimento = dados.procedimentos[maquina["procedimento_id"]]
+
+    resposta = dict(maquina)
+    total_passos = len(procedimento["passos"])
+    resposta["procedimento"] = procedimento["titulo"]
+    resposta["total_passos"] = total_passos
+
+    return jsonify(resposta)
 
 
 # ===============================================================
@@ -151,10 +163,22 @@ def criar_ordem():
     #     corpo = request.get_json(silent=True) or {}
     #   e pegar "maquina_codigo" (maiúsculas, sem espaços) e "tecnico" (sem espaços).
     #
+
+    corpo = request.get_json(silent=True) or {}
+    maquina_codigo = corpo.get("maquina_codigo", "").upper()
+    tecnico = corpo.get("tecnico", "")
+
     # TODO 2.2: validar
     #   - se faltar código ou técnico -> erro("Informe maquina_codigo e tecnico", 400)
     #   - se a máquina não existir     -> erro("Máquina não encontrada", 404)
     #
+
+    if not maquina_codigo or not tecnico:
+        return erro("Informe maquina_codigo e tecnico", 400)
+
+    if maquina_codigo not in dados.maquinas:
+        return erro("Máquina não encontrada", 404)
+
     # TODO 2.3: criar a ordem (um dict) com estes campos:
     #     "id":             dados.proximo_id("ordem")
     #     "maquina_codigo": o código
@@ -165,8 +189,19 @@ def criar_ordem():
     #     "fim":            None
     #   e guardar em dados.ordens[id] = ordem
     #
+
+    ordem = {
+        "id": dados.proximo_id("ordem"),
+        "maquina_codigo": maquina_codigo,
+        "tecnico": tecnico,
+        "status": "em_andamento",
+        "passo_atual": 0,
+        "inicio": dados.agora(),
+        "fim": None,
+    }
+    dados.ordens[ordem["id"]] = ordem
     # TODO 2.4: return jsonify(montar_ordem(ordem)), 201
-    return nao_implementado(2)
+    return jsonify(montar_ordem(ordem)), 201
 
 
 @app.route("/api/ordens/<int:ordem_id>", methods=["GET"])
@@ -174,8 +209,10 @@ def buscar_ordem(ordem_id):
     # TODO 2.5: se ordem_id não estiver em dados.ordens -> erro("Ordem não encontrada", 404)
     #           senão devolva jsonify(montar_ordem(...)) da ordem.
     # (O óculos chama esta rota a cada 3 segundos para ver se chegou resposta do especialista.)
-    return nao_implementado(2)
-
+    if ordem_id not in dados.ordens:
+        return erro("Ordem não encontrada", 404)
+    else:
+        return jsonify(montar_ordem(dados.ordens[ordem_id]))
 
 # ===============================================================
 # MISSÃO 3 - NAVEGAR PELOS PASSOS                   (~55 min)
@@ -193,14 +230,30 @@ def avancar_passo(ordem_id):
     # TODO 3.1: regra -> não pode avançar se já está no ÚLTIMO passo.
     #   O último passo é total_de_passos(ordem) - 1.
     #   Se puder, some 1 em ordem["passo_atual"].
-    return nao_implementado(3)
+    ordem = dados.ordens.get(ordem_id)
+    if ordem == None:
+        return erro("Ordem não encontrada", 404)
+    
+    if ordem["status"] == "concluida":
+        return erro("Ordem já concluída", 400)
+
+    if ordem["passo_atual"] >= total_de_passos(ordem) - 1:
+        return erro("Já está no último passo", 400)
+
+    ordem["passo_atual"] += 1
+    return jsonify(montar_ordem(ordem))
 
 
 @app.route("/api/ordens/<int:ordem_id>/voltar", methods=["POST"])
 def voltar_passo(ordem_id):
     # TODO 3.2: regra -> não pode voltar se está no passo 0.
     #   Se puder, subtraia 1 de ordem["passo_atual"].
-    return nao_implementado(3)
+    ordem = dados.ordens.get(ordem_id)
+    if ordem["passo_atual"] == 0:
+        return erro("Já está no primeiro passo", 400)
+    else:
+        ordem["passo_atual"] -= 1
+    return jsonify(montar_ordem(ordem))
 
 
 @app.route("/api/ordens/<int:ordem_id>/concluir", methods=["POST"])
@@ -208,7 +261,14 @@ def concluir_ordem(ordem_id):
     # TODO 3.3: regra -> só pode concluir se estiver no ÚLTIMO passo
     #   (senão: erro("Ainda faltam passos", 400)).
     #   Se puder: status = "concluida" e fim = dados.agora().
-    return nao_implementado(3)
+    ordem = dados.ordens.get(ordem_id)
+    if ordem["passo_atual"] != total_de_passos(ordem) - 1:
+        return erro("Ainda faltam passos", 400)
+    
+    ordem["status"] = "concluida"
+    ordem["fim"] = dados.agora() 
+
+    return jsonify(montar_ordem(ordem))
 
 
 # ===============================================================
@@ -222,6 +282,18 @@ def pedir_ajuda(ordem_id):
     # TODO 4.1: validar -> ordem existe (404)? não está concluída (400)?
     #           mensagem não está vazia (400 "Escreva a mensagem")?
     #
+    ordem = dados.ordens.get(ordem_id)
+    if ordem is None:
+        return erro("Ordem não encontrada", 404)
+
+    if ordem["status"] == "concluida":
+        return erro("Ordem já concluída", 400)
+
+    corpo = request.get_json(silent=True) or {}
+    mensagem = corpo.get("mensagem", "")
+    if not isinstance(mensagem, str) or not mensagem.strip():
+        return erro("Escreva a mensagem", 400)
+    
     # TODO 4.2: criar o pedido (um dict) com:
     #     "id":            dados.proximo_id("ajuda")
     #     "ordem_id":      ordem_id
@@ -233,10 +305,24 @@ def pedir_ajuda(ordem_id):
     #     "respondido_em": None
     #   e guardar em dados.pedidos_ajuda[id] = pedido
     #
+    pedido = {
+        "id": dados.proximo_id("ajuda"),
+        "ordem_id": ordem_id,
+        "passo": ordem["passo_atual"],
+        "mensagem": mensagem,
+        "resposta": None,
+        "status": "aberto",
+        "criado_em": dados.agora(),
+        "respondido_em": None,
+    }
+
+    dados.pedidos_ajuda[pedido["id"]] = pedido
     # TODO 4.3: mudar o status da ORDEM para "aguardando_ajuda"
     #
+    ordem["status"] = "aguardando_ajuda"
+    
     # TODO 4.4: return jsonify(pedido), 201
-    return nao_implementado(4)
+    return jsonify(pedido), 201
 
 
 # ===============================================================
@@ -253,28 +339,60 @@ def listar_ajudas():
     #   - Cada item da lista deve ser uma cópia do pedido (dict(pedido)) com
     #     um campo a mais: "ordem" = montar_ordem(da ordem daquele pedido)
     #     (é assim que o painel sabe o técnico, a máquina e o texto do passo)
-    return nao_implementado(5)
+    filtro = request.args.get("status")
+    pedidos = []
+    for pedido in dados.pedidos_ajuda.values():
+        if filtro is not None and pedido["status"] != filtro:
+            continue
+        item = dict(pedido)
+        item["ordem"] = montar_ordem(dados.ordens[pedido["ordem_id"]])
+        pedidos.append(item)
+    return jsonify(pedidos)
 
 
 @app.route("/api/ajudas/<int:ajuda_id>/responder", methods=["POST"])
 def responder_ajuda(ajuda_id):
     # O painel envia: {"resposta": "Olhe atrás do painel lateral"}
     #
-    # TODO 5.2: validar -> pedido existe (404)? já foi respondido (400)?
+    # TODO 5.2: validar -> pedido existe (404)? já foi respondido (400)? 
     #           resposta não está vazia (400)?
+
+    pedido = dados.pedidos_ajuda.get(ajuda_id)
+    if pedido is None:
+        return erro("Pedido não encontrado", 404)
+
+    if pedido["status"] == "respondido":
+        return erro("Pedido já respondido", 400)
+
+    corpo = request.get_json(silent=True) or {}
+    resposta = corpo.get("resposta", "")
+    if not isinstance(resposta, str) or not resposta.strip():
+        return erro("Escreva a resposta", 400)
+
+
     # TODO 5.3: preencher no pedido: "resposta", "status" = "respondido",
     #           "respondido_em" = dados.agora()
+
+    pedido["resposta"] = resposta
+    pedido["status"] = "respondido"
+    pedido["respondido_em"] = dados.agora()
+
     # TODO 5.4: se a ORDEM desse pedido estiver "aguardando_ajuda",
     #           volte o status dela para "em_andamento"
+
+    ordem = dados.ordens.get(ajuda_id)
+    if ordem["status"] == "aguardando_ajuda":
+        ordem["status"] = "em_andamento"
+
     # TODO 5.5: return jsonify(pedido)
-    return nao_implementado(5)
+    return jsonify(pedido)
 
 
 @app.route("/api/ordens", methods=["GET"])
 def listar_ordens():
     # TODO 5.6: devolver a lista de TODAS as ordens, cada uma passada por montar_ordem.
     #   Dica: [montar_ordem(o) for o in dados.ordens.values()]
-    return nao_implementado(5)
+    return [montar_ordem(o) for o in dados.ordens.values()]
 
 
 # ===============================================================
